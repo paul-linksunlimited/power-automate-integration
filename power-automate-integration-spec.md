@@ -135,8 +135,9 @@ Because retries can happen, a duplicate `runId` must not be stored twice.
 No new endpoint or route is needed — the existing `/:flow` route handles it. To add a flow, the user will give the app builder:
 
 - **Flow name** — exact string, lowercase-hyphen, e.g. `hourly-picks`. This is the value the app will match on `flow` in callbacks.
-- **Trigger URL** — only if the flow is app-triggered. Omitted for scheduled/recurrence flows (the app never calls those).
-- **Response row shape** — the field names/types that will appear in `rows` for this flow, so the app can validate and render them.
+- **Trigger URL** — blank means the flow is scheduled/recurrence and the app never triggers it. If provided, it is a secret (it contains a `sig=` value): store it server-side, never in client code.
+- **Parameters** — names and types the procedure takes, or "none". The app sends these as `ProcedureParameters` in the trigger request (Section 3).
+- **Row fields** — exact field names and types that will appear in `rows` for this flow, ideally with one example row. The app uses these to validate `succeeded` callbacks (Section 4) and to render the data.
 
 > Note for the person filling this out: if this flow is scheduled/recurrence (not app-triggered), the flow name above must already be hardcoded on the Power Automate side, in the flow's callback step. The app cannot detect a mismatch — a wrong or missing hardcoded name will just fail as "unknown flow" with no other symptom.
 
