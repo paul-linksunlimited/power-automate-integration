@@ -4,6 +4,8 @@ Generic contract for connecting this app to Power Automate flows that run SQL Se
 
 An app can have many flows. All flows follow this same contract.
 
+**Source of truth:** https://raw.githubusercontent.com/paul-linksunlimited/power-automate-integration/main/power-automate-integration-spec.md — this spec is maintained at that URL and may change. Do not save a copy into the project. Re-fetch it from that URL whenever setting up a new flow (Section 5) or working on this integration.
+
 ## 1. Secrets (per application, not per flow)
 
 | Secret | Direction | Purpose |
@@ -17,7 +19,7 @@ An app can have many flows. All flows follow this same contract.
 ## 2. What to build
 
 - **One ingestion endpoint**: `POST <CallbackURL>/:flow` — a single route parameterized by `flow`, not one endpoint per flow.
-- **Request table** (app-triggered flows only): tracks the lifecycle of each `requestId` this app started. Required fields — dictated by the wire contract: `requestId`, `flow`, `parameters`, `status` (`pending` / `succeeded` / `failed` / `timed_out`), `runId`, `errorCode`, `error`, from the trigger request (Section 3) and callback (Section 4). Recommended, not required: `created` and `completed` timestamps for tracking run duration and spotting stuck/slow flows — `created` set when the trigger is sent, `completed` set when a matching callback is processed (can simply reuse the callback's own `generatedAt` rather than tracking a separate receipt time). Row is created `pending` on trigger, then updated with `status`/`runId`/`errorCode`/`error`/`completed` when its callback arrives.
+- **Request table** (app-triggered flows only): tracks the lifecycle of each `requestId` this app started. Required fields — dictated by the wire contract: `requestId`, `flow`, `parameters`, `status` (`pending` / `succeeded` / `failed` / `timed_out`), `runId`, `errorCode`, `error`, from the trigger request (Section 3) and callback (Section 4). Also required: `triggerHttpStatus` — the HTTP status Power Automate returned to the trigger call itself (Section 3), recorded when the trigger is sent. This is the only way to tell "the flow never ran" (e.g. a 400 schema rejection) apart from "the flow ran and failed," since a rejected trigger produces no run and therefore no callback. Recommended, not required: `created` and `completed` timestamps for tracking run duration and spotting stuck/slow flows — `created` set when the trigger is sent, `completed` set when a matching callback is processed (can simply reuse the callback's own `generatedAt` rather than tracking a separate receipt time). Row is created `pending` on trigger, then updated with `status`/`runId`/`errorCode`/`error`/`completed` when its callback arrives.
 - **Results storage**: the actual data from every accepted callback — app-triggered, scheduled, and failures alike — storing the full envelope and `rows`. This is separate from the request table: a scheduled callback has no request to update, but its result still needs to be stored (see Section 4).
 - **Trigger action** (server-side, only needed for flows the app starts — see Section 5): generate a `requestId`, save it `pending` in the request table, POST to the flow's trigger URL, handle the response per Section 3.
 - **Timeout job**: mark `pending` requests `timed_out` after 15 minutes with no callback.
@@ -44,7 +46,7 @@ Only applies to flows the app starts via HTTP trigger. Not all flows are trigger
 | Trigger HTTP response | App action |
 |---|---|
 | 202 | Keep request `pending`. |
-| 400 | Body didn't match the flow's schema. Mark `failed`. |
+| 400 | Body didn't match the flow's schema; no run was created. Mark `failed`. |
 | 401 / 403 | Trigger URL wrong/incomplete. Mark `failed`. |
 | 429 | Throttled. Mark `failed` (user can retry). |
 | Other / network error | Mark `failed`. |
@@ -132,7 +134,7 @@ Because retries can happen, a duplicate `runId` must not be stored twice.
 
 No new endpoint or route is needed — the existing `/:flow` route handles it. To add a flow, the user will give the app builder:
 
-- **Flow name** — exact string, e.g. `hourlypicks`. This is the value the app will match on `flow` in callbacks.
+- **Flow name** — exact string, lowercase-hyphen, e.g. `hourly-picks`. This is the value the app will match on `flow` in callbacks.
 - **Trigger URL** — only if the flow is app-triggered. Omitted for scheduled/recurrence flows (the app never calls those).
 - **Response row shape** — the field names/types that will appear in `rows` for this flow, so the app can validate and render them.
 
@@ -142,4 +144,3 @@ No new endpoint or route is needed — the existing `/:flow` route handles it. T
 
 - `TriggerKey`, `CallbackKey`, and all trigger URLs are secrets: store server-side only, never in client code or logs.
 - Compare `x-ingest-secret` in constant time.
-- Save this spec in a location the project can reference again later (e.g. project docs/repo), since new flows will be added over time using Section 5.
