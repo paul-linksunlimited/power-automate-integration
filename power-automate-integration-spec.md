@@ -134,19 +134,19 @@ Because retries can happen, a duplicate `runId` must not be stored twice.
 
 ## 5. Synchronous flows
 
-An alternative to Section 4, for flows where the result should come back immediately on the same HTTP call — no callback, no `/ingest` call, no request-table row, nothing to time out.
+An alternative to Section 4, for flows where the result comes back on the same HTTP call — no callback, no `/ingest` call, no request-table row.
 
-The trigger request (Section 3) is identical. The difference is what the flow sends back on that same call:
+The trigger request (Section 3) is identical. The response comes back on that same call, with the same envelope body used in async callbacks (Section 4): `requestId`, `flow`, `status`, `runId`, `generatedAt`, `parameters`, `errorCode`, `error`, `rows`. The HTTP status code reflects which path the flow took:
 
-- **Always responds `200`**, with the same envelope shape used in async callbacks (Section 4) as the body: `requestId`, `flow`, `status`, `runId`, `generatedAt`, `parameters`, `errorCode`, `error`, `rows`.
-- Success or failure is read from the envelope's `status`/`errorCode` fields — **not** the HTTP status code. The 202/400/401/403/429 table in Section 3 does not apply to sync flows; a sync flow always answers `200` and puts the real outcome inside the body.
-- The app should treat the response body the same way it would treat an async callback's body (Section 4's field table), just without any of the request-table or duplicate-detection logic — there's one call, one response, nothing to reconcile afterward.
+| HTTP status | When |
+|---|---|
+| 200 | Succeeded. |
+| 401 | Invalid/missing `triggerKey`. |
+| 500 | Procedure failed. |
 
-**When to use sync instead of async:** small, fast lookups — reference/config tables, dropdown options — not reports or anything with a large result set.
+The app reads the response body the same way it reads an async callback body (Section 4's field table) — there's just one call and one response, with no request-table or duplicate-detection logic needed.
 
-**Limits:** the flow must respond within Power Automate's inbound request window (2 minutes), and the SQL connector itself times out slower procedures well before that. The same 8 MB gateway response cap from Section 4 applies. If a procedure can't reliably finish and stay under these, use async (Section 4) instead.
-
-**What to build:** no ingestion endpoint work needed for sync flows — the trigger action (Section 2) just reads the result off its own HTTP response instead of waiting on a callback. Whether that result gets persisted anywhere is a per-flow decision (Section 6), not something this contract requires.
+**What to build:** no ingestion endpoint work needed for sync flows — the trigger action (Section 2) reads the result off its own HTTP response instead of waiting on a callback. Whether that result gets persisted anywhere is a per-flow decision (Section 6), not something this contract requires.
 
 ## 6. Adding a new flow
 
