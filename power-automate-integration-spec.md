@@ -18,7 +18,7 @@ An app can have many flows. All flows follow this same contract.
 
 ## 2. What to build
 
-- **One ingestion endpoint**: `POST <CallbackURL>/:flow` — a single route parameterized by `flow`, not one endpoint per flow. Only used by async flows (Section 4); sync flows (Section 5) never call it.
+- **One ingestion endpoint**: `POST <CallbackURL>?flow=<flow>` — a single route, flow id as a query param, not one endpoint per flow. Only used by async flows (Section 4); sync flows (Section 5) never call it.
 - **Request table** (async, app-triggered flows only): tracks the lifecycle of each `requestId` this app started. Required fields — dictated by the wire contract: `requestId`, `flow`, `parameters`, `status` (`pending` / `succeeded` / `failed` / `timed_out`), `runId`, `errorCode`, `error`, from the trigger request (Section 3) and callback (Section 4). Also required: `triggerHttpStatus` — the HTTP status Power Automate returned to the trigger call itself (Section 3), recorded when the trigger is sent. This is the only way to tell "the flow never ran" (e.g. a 400 schema rejection) apart from "the flow ran and failed," since a rejected trigger produces no run and therefore no callback. Recommended, not required: `created` and `completed` timestamps for tracking run duration and spotting stuck/slow flows — `created` set when the trigger is sent, `completed` set when a matching callback is processed (can simply reuse the callback's own `generatedAt` rather than tracking a separate receipt time). Row is created `pending` on trigger, then updated with `status`/`runId`/`errorCode`/`error`/`completed` when its callback arrives. Sync flows (Section 5) don't use this table — there's no pending state, since the result comes back on the same call.
 - **Results storage** (async only): the actual data from every accepted callback — app-triggered, scheduled, and failures alike — storing the full envelope and `rows`. This is separate from the request table: a scheduled callback has no request to update, but its result still needs to be stored (see Section 4). Sync flow results are transient by default — used once by whatever called them — unless the per-flow instructions (Section 6) say to persist them.
 - **Trigger action** (server-side, needed for any flow the app calls — async or sync, see Section 6): for async, generate a `requestId`, save it `pending` in the request table, POST to the flow's trigger URL, handle the response per Section 3. For sync, POST the same way but read the result straight from that call's response — see Section 5.
@@ -55,7 +55,7 @@ The table below applies to **async flows**. For sync flows, see Section 5 — th
 
 ## 4. Callback (Flow → App) — async flows
 
-`POST <CallbackURL>/<flow>`, headers `Content-Type: application/json` and `x-ingest-secret: <CALLBACK_KEY>`.
+`POST <CallbackURL>?flow=<flow>`, headers `Content-Type: application/json` and `x-ingest-secret: <CALLBACK_KEY>`.
 
 Every outcome — success, failure, and scheduled runs — uses the same body shape:
 
@@ -106,7 +106,7 @@ Failure examples — there are two failure modes, both use `status: "failed"` wi
 | Field | Notes |
 |---|---|
 | `requestId` | Echoed from the trigger request. **Empty string `""` for scheduled flows** — there is no app-initiated request to echo. |
-| `flow` | The flow id. Always equals the URL's `:flow` segment. |
+| `flow` | The flow id. Always equals the URL's `?flow=` value. |
 | `status` | `succeeded` or `failed`. |
 | `runId` | Power Automate run id. Unique per run. Used for duplicate detection. |
 | `generatedAt` | UTC time the callback was sent. |
@@ -125,7 +125,7 @@ Failure examples — there are two failure modes, both use `status: "failed"` wi
 |---|---|
 | 202 | Stored. |
 | 200 `{ "duplicate": true }` | This `runId` was already stored — return this instead of storing again. |
-| 400 | Bad JSON; unknown `flow`; body `flow` ≠ URL `flow`; invalid `status`/`errorCode`; or a `succeeded` callback missing the flow's expected row fields. |
+| 400 | Bad JSON; unknown `flow`; body `flow` ≠ the `?flow=` query value; invalid `status`/`errorCode`; or a `succeeded` callback missing the flow's expected row fields. |
 | 401 | Missing or wrong `x-ingest-secret`. |
 
 > **Reply as soon as the result is stored — before any heavier processing.** Power Automate is waiting on this HTTP response; a slow reply risks a timeout on the flow's side, which can trigger a retry of the same callback. Do validation and the storage write first, send the response, then do anything else (transforms, notifications, etc.) afterward.
@@ -150,7 +150,7 @@ The app reads the response body the same way it reads an async callback body (Se
 
 ## 6. Adding a new flow
 
-No new endpoint or route is needed — the existing `/:flow` route handles async flows, and sync flows don't need one at all. To add a flow, the user will give the app builder:
+No new endpoint or route is needed — the existing ingestion endpoint (Section 2/4) handles async flows, and sync flows don't need one at all. To add a flow, the user will give the app builder:
 
 - **Flow name** — exact string, lowercase-hyphen, e.g. `hourly-picks`. This is the value the app will match on `flow` in callbacks (async) or send in the trigger request (both modes).
 - **Response mode** — `sync` or `async`. Determines whether the app reads the result off the trigger's own response (Section 5) or waits for a callback (Section 4).
